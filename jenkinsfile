@@ -1,0 +1,66 @@
+pipeline {
+  agent any
+  stages {
+    stage('Build') {
+      steps {
+        sh 'npm install'
+        sh 'npm run build'
+      }
+    }
+stage('Create Artifact') {
+      steps {
+        sh 'tar czf build.tar.gz node_modules build/'
+      }
+    }
+    // To upload artifacts into S3 bucket
+	 stage('S3 Upload') {
+      steps {
+        s3Upload consoleLogLevel: 'INFO',
+	dontSetBuildResultOnFailure: false,
+	dontWaitForConcurrentBuildCompletion: false,
+	entries: [
+				[
+					bucket: 'new.bucket1', 
+					flatten: false,
+					gzipFiles: false,
+					keepForever: false,
+					managedArtifacts: false,
+					noUploadOnFailure: false,
+					selectedRegion: 'ap-south-1',
+					showDirectlyInBrowser: false,
+					sourceFile: 'build.tar.gz',
+					storageClass: 'STANDARD',
+					uploadFromSlave: false,
+					useServerSideEncryption: false
+				]
+			], 
+	pluginFailureResultConstraint: 'FAILURE', 
+	profileName: 'new.bucket1',
+	userMetadata: []
+      		}
+    	}  
+     stage('Publish ECR') {
+      steps { 
+	script {
+          sh 'aws ecr get-login-password --region ap-south-1 | docker login --username AWS --password-stdin 586583118654.dkr.ecr.ap-south-1.amazonaws.com'
+          sh 'docker build -t docker.repo .'
+          sh 'docker tag docker.repo:latest 586583118654.dkr.ecr.ap-south-1.amazonaws.com/docker.repo:latest'
+          sh 'docker push 586583118654.dkr.ecr.ap-south-1.amazonaws.com/docker.repo:latest' 
+	}
+      } 
+    }
+	  stage('Deploy') {
+		  steps {
+			  script {
+				sh 'aws ecr get-login-password --region ap-south-1 | docker login --username AWS --password-stdin 586583118654.dkr.ecr.ap-south-1.amazonaws.com'
+				sh "sudo docker rm -f node-webapp || true"   
+				sh "docker pull 586583118654.dkr.ecr.ap-south-1.amazonaws.com/docker.repo:latest "
+				sh "docker tag 586583118654.dkr.ecr.ap-south-1.amazonaws.com/docker.repo:latest node-webapp:latest "
+				sh "docker rmi 586583118654.dkr.ecr.ap-south-1.amazonaws.com/docker.repo:latest "
+				sh "sudo docker run -it -d --name node-webapp -p 3000:8080 node-webapp"
+				  
+			  }
+		  }
+	  }
+  }
+}
